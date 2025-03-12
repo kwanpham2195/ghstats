@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type ContributorStats struct {
@@ -27,30 +27,22 @@ type ContributorStats struct {
 }
 
 func main() {
-	reposFile := flag.String("repos-file", "repos.txt", "Path to repository list file, one repo per line (required)")
-	startDate := flag.String("start", "", "Start date in YYYY-MM-DD format (default: 1 month ago)")
-	endDate := flag.String("end", "", "End date in YYYY-MM-DD format (default: today)")
-	output := flag.String("output", "csv", "Output format (csv or json)")
-	flag.Parse()
-	slog.Info("Program started")
-
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		if err := godotenv.Load(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading .env file: %v\n", err)
-			os.Exit(1)
-		}
-		slog.Info("Loaded .env file successfully")
-		token = os.Getenv("GITHUB_TOKEN")
-	}
-	if token == "" {
-		flag.Usage()
+	p := tea.NewProgram(newInputModel())
+	model, err := p.StartReturningModel()
+	if err != nil {
+		slog.Error("TUI input error", "err", err)
 		os.Exit(1)
-	} else {
-		slog.Info("GITHUB_TOKEN read from environment")
 	}
+	inp := model.(inputModel)
+	if inp.githubToken != "" {
+		os.Setenv("GITHUB_TOKEN", inp.githubToken)
+	}
+	runProcessing(inp.startDate, inp.endDate, inp.outputPath, inp.reposPath)
+}
 
-	data, err := os.ReadFile(*reposFile)
+func runProcessing(startDate, endDate, out, reposPath string) {
+	// Read repositories file:
+	data, err := os.ReadFile(reposPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading repository file: %v\n", err)
 		os.Exit(1)
@@ -63,41 +55,24 @@ func main() {
 			repos = append(repos, repo)
 		}
 	}
-	slog.Info("Loaded repositories", "count", len(repos))
-	start, end := parseDates(*startDate, *endDate)
+
+	// Setup output generation and HTTP client:
+	parsedStart, parsedEnd := parseDates(startDate, endDate)
+	outputFile, err := os.Create("output.csv")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
+		os.Exit(1)
+	}
+	defer outputFile.Close()
+	writer := csv.NewWriter(outputFile)
+	writer.Write([]string{"Repository", "Contributor", "Additions", "Deletions", "Commits", "StartDate", "EndDate"})
+	defer writer.Flush()
 	client := &http.Client{}
 
-	var writer *csv.Writer
-	if *output == "csv" {
-		outputFile, err := os.Create("output.csv")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
-			os.Exit(1)
-		}
-		defer outputFile.Close()
-		writer = csv.NewWriter(outputFile)
-		writer.Write([]string{"Repository", "Contributor", "Additions", "Deletions", "Commits", "StartDate", "EndDate"})
-	} else {
-		writer = csv.NewWriter(os.Stdout)
-	}
-	defer writer.Flush()
-
-	for _, repo := range repos {
-		parts := strings.Split(repo, "/")
-		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "Invalid repository format: %s\n", repo)
-			continue
-		}
-		owner, repoName := parts[0], parts[1]
-		slog.Info("Fetching contributor stats", "repository", repo)
-
-		stats, err := fetchContributorStats(client, owner, repoName, token)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching stats for %s: %v\n", repo, err)
-			continue
-		}
-
-		processStats(stats, repo, start, end, writer, *output)
+	processing := newProcessingModel(repos, parsedStart, parsedEnd, out, client, writer)
+	p := tea.NewProgram(processing)
+	if err := p.Start(); err != nil {
+		// Error running processing TUI
 	}
 }
 
@@ -141,8 +116,7 @@ func fetchContributorStats(client *http.Client, owner, repo, token string) ([]Co
 			}
 			return stats, nil
 		case http.StatusAccepted:
-			slog.Info("GitHub API accepted request, waiting for stats to be generated...")
-			time.Sleep(2 * time.Second)
+			time.Sleep(1 * time.Second)
 			continue
 		default:
 			return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -171,27 +145,121 @@ func processStats(stats []ContributorStats, repo string, start, end time.Time, w
 			continue
 		}
 
-		switch format {
-		case "csv":
-			writer.Write([]string{
-				repo,
-				contributor.Author.Login,
-				fmt.Sprintf("%d", totalAdditions),
-				fmt.Sprintf("%d", totalDeletions),
-				fmt.Sprintf("%d", totalCommits),
-				start.Format("2006-01-02"),
-				end.Format("2006-01-02"),
-			})
-		case "json":
-			json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
-				"repository":  repo,
-				"contributor": contributor.Author.Login,
-				"additions":   totalAdditions,
-				"deletions":   totalDeletions,
-				"commits":     totalCommits,
-				"start_date":  start.Format("2006-01-02"),
-				"end_date":    end.Format("2006-01-02"),
-			})
+		writer.Write([]string{
+			repo,
+			contributor.Author.Login,
+			fmt.Sprintf("%d", totalAdditions),
+			fmt.Sprintf("%d", totalDeletions),
+			fmt.Sprintf("%d", totalCommits),
+			start.Format("2006-01-02"),
+			end.Format("2006-01-02"),
+		})
+	}
+}
+
+type (
+	repoProcessedMsg string
+	TickMsg          time.Time
+)
+
+func processRepo(repo string) tea.Cmd {
+	return func() tea.Msg {
+		time.Sleep(2 * time.Second)
+		return repoProcessedMsg(repo)
+	}
+}
+
+type processingModel struct {
+	repos   []string
+	current int
+	spinner spinner.Model
+	done    bool
+	message string
+	start   time.Time
+	end     time.Time
+	out     string
+	client  *http.Client
+	writer  *csv.Writer
+}
+
+func newProcessingModel(repos []string, start, end time.Time, out string, client *http.Client, writer *csv.Writer) processingModel {
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	return processingModel{
+		repos:   repos,
+		current: 0,
+		spinner: s,
+		done:    false,
+		start:   start,
+		end:     end,
+		out:     out,
+		client:  client,
+		writer:  writer,
+	}
+}
+
+func (m processingModel) Init() tea.Cmd {
+	if len(m.repos) > 0 {
+		return tea.Batch(m.spinner.Tick, m.processCurrentRepo())
+	}
+	return m.spinner.Tick
+}
+
+func (m processingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			m.done = true
+			return m, tea.Quit
 		}
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	case repoProcessedMsg:
+		m.message = fmt.Sprintf("Processed repository: %s", msg)
+		m.current++
+		if m.current < len(m.repos) {
+			return m, tea.Batch(tea.Tick(time.Second, func(t time.Time) tea.Msg {
+				return TickMsg(t)
+			}), m.processCurrentRepo())
+		} else {
+			m.done = true
+			return m, tea.Quit
+		}
+	}
+
+	return m, nil
+}
+
+func (m processingModel) View() string {
+	if m.done {
+		return "All repositories processed.\n"
+	}
+	currentRepo := ""
+	if m.current < len(m.repos) {
+		currentRepo = m.repos[m.current]
+	}
+	return fmt.Sprintf("Processing repository %d/%d: %s\n%s", m.current+1, len(m.repos), currentRepo, m.spinner.View())
+}
+
+func (m processingModel) processCurrentRepo() tea.Cmd {
+	return func() tea.Msg {
+		repo := m.repos[m.current]
+		parts := strings.Split(repo, "/")
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stderr, "Invalid repository format: %s\n", repo)
+			return repoProcessedMsg(repo)
+		}
+		owner, repoName := parts[0], parts[1]
+		stats, err := fetchContributorStats(m.client, owner, repoName, os.Getenv("GITHUB_TOKEN"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error fetching stats for %s: %v\n", repo, err)
+			return repoProcessedMsg(repo)
+		}
+		processStats(stats, repo, m.start, m.end, m.writer, m.out)
+		return repoProcessedMsg(repo)
 	}
 }
