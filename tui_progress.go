@@ -6,6 +6,16 @@ import (
 
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+var (
+	processStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7D56F4")).
+			Bold(true)
+
+	progressBarStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#04B575"))
 )
 
 type progressModel struct {
@@ -43,6 +53,6 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m progressModel) View() string {
-	bar := m.prog.View()
-	return fmt.Sprintf("Processing: %s %.0f%%\n", bar, m.percent*100)
+	bar := progressBarStyle.Render(m.prog.View())
+	return fmt.Sprintf("%s %s %.0f%%\n", processStyle.Render("Processing:"), bar, m.percent*100)
 }

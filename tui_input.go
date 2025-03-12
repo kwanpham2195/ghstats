@@ -1,13 +1,33 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+var (
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FAFAFA")).
+			Background(lipgloss.Color("#7D56F4")).
+			Padding(0, 1)
+
+	inputLabelStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7D56F4")).
+			Bold(true)
+
+	valueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#04B575"))
+
+	highlightStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FAFAFA")).
+			Background(lipgloss.Color("#7D56F4")).
+			Padding(0, 1)
 )
 
 type inputState int
@@ -155,21 +175,24 @@ func (m inputModel) View() string {
 		var sb strings.Builder
 		defaultStart, defaultEnd := getDefaultDates()
 
-		sb.WriteString("Inputs received:\n")
-		sb.WriteString(fmt.Sprintf("Start Date: %s\n", getValueOrDefault(m.startDate, defaultStart+" (start of month)")))
-		sb.WriteString(fmt.Sprintf("End Date: %s\n", getValueOrDefault(m.endDate, defaultEnd+" (today)")))
+		sb.WriteString(titleStyle.Render("✨ Inputs Received") + "\n\n")
+
+		sb.WriteString(inputLabelStyle.Render("Start Date: ") + valueStyle.Render(getValueOrDefault(m.startDate, defaultStart+" (start of month)")) + "\n")
+		sb.WriteString(inputLabelStyle.Render("End Date: ") + valueStyle.Render(getValueOrDefault(m.endDate, defaultEnd+" (today)")) + "\n")
 		if m.githubToken != "" {
-			sb.WriteString("GitHub Token: [provided]\n")
+			sb.WriteString(inputLabelStyle.Render("GitHub Token: ") + valueStyle.Render("[provided]") + "\n")
 		}
-		sb.WriteString(fmt.Sprintf("Output File: %s\n", getValueOrDefault(m.outputPath, "output.csv")))
-		sb.WriteString(fmt.Sprintf("Repositories File: %s\n", getValueOrDefault(m.reposPath, "repos.txt")))
-		sb.WriteString("\nStart processing...")
+		sb.WriteString(inputLabelStyle.Render("Output File: ") + valueStyle.Render(getValueOrDefault(m.outputPath, "output.csv")) + "\n")
+		sb.WriteString(inputLabelStyle.Render("Repositories File: ") + valueStyle.Render(getValueOrDefault(m.reposPath, "repos.txt")) + "\n\n")
+
+		sb.WriteString(highlightStyle.Render("Starting processing..."))
 		return sb.String()
 	}
 
-	s := "Enter parameters for processing:\n\n"
+	s := titleStyle.Render("GitHub Contributor Stats") + "\n\n"
 	switch m.state {
 	case inputStart:
+		s += inputLabelStyle.Render("Enter parameters:") + "\n\n"
 		s += m.start.View()
 	case inputEnd:
 		s += m.end.View()
@@ -180,7 +203,7 @@ func (m inputModel) View() string {
 	case inputRepos:
 		s += m.repos.View()
 	}
-	s += "\n\n(Press Enter for default value and continue)"
+	s += "\n\n" + lipgloss.NewStyle().Faint(true).Render("(Press Enter for default value)")
 	return s
 }
 
