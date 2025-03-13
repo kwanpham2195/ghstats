@@ -28,7 +28,7 @@ type ContributorStats struct {
 
 func main() {
 	p := tea.NewProgram(newInputModel())
-	model, err := p.StartReturningModel()
+	model, err := p.Run()
 	if err != nil {
 		slog.Error("TUI input error", "err", err)
 		os.Exit(1)
@@ -71,7 +71,7 @@ func runProcessing(startDate, endDate, out, reposPath string) {
 
 	processing := newProcessingModel(repos, parsedStart, parsedEnd, out, client, writer)
 	p := tea.NewProgram(processing)
-	if err := p.Start(); err != nil {
+	if _, err := p.Run(); err != nil {
 		// Error running processing TUI
 	}
 }
