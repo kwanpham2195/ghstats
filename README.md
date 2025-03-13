@@ -36,7 +36,11 @@ This tool fetches GitHub contributor statistics for repositories and exports the
 
 You can install this tool using one of these methods:
 
-From source:
+### Binary Releases
+
+For Windows, Mac OS(10.12+) or Linux, you can download a binary release [here](../../releases).
+
+### From source
 
 ```bash
 git clone https://github.com/kwanpham2195/ghstats.git
@@ -44,7 +48,7 @@ cd ghstats
 go install
 ```
 
-Via go install:
+### Via go install
 
 ```bash
 go install github.com/kwanpham2195/ghstats@latest
