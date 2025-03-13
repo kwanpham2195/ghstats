@@ -1,3 +1,5 @@
 .env
 output.csv
 repos.txt
+# Added by goreleaser init:
+dist/
